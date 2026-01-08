@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF Generator</title>
+  
+  <!-- PDF.js Library -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+    
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      overflow: hidden;
+    }
+    
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      text-align: center;
+    }
+    
+    .header h1 {
+      font-size: 2.5em;
+      margin-bottom: 10px;
+      font-weight: 700;
+    }
+    
+    .header p {
+      font-size: 1.1em;
+      opacity: 0.9;
+    }
+    
+    .stepper {
+      display: flex;
+      justify-content: space-between;
+      padding: 30px;
+      background: #f8f9fa;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    
+    .step {
+      flex: 1;
+      text-align: center;
+      position: relative;
+      padding: 15px;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    
+    .step:not(:last-child)::after {
+      content: '';
+      position: absolute;
+      top: 30px;
+      right: -50%;
+      width: 100%;
+      height: 2px;
+      background: #ddd;
+      z-index: 0;
+    }
+    
+    .step.active::after {
+      background: #667eea;
+    }
+    
+    .step.completed::after {
+      background: #4caf50;
+    }
+    
+    .step-number {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: #e0e0e0;
+      color: #666;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      margin-bottom: 10px;
+      position: relative;
+      z-index: 1;
+      transition: all 0.3s;
+    }
+    
+    .step.active .step-number {
+      background: #667eea;
+      color: white;
+      transform: scale(1.1);
+    }
+    
+    .step.completed .step-number {
+      background: #4caf50;
+      color: white;
+    }
+    
+    .step-label {
+      font-size: 0.9em;
+      color: #666;
+      font-weight: 500;
+    }
+    
+    .step.active .step-label {
+      color: #667eea;
+      font-weight: 600;
+    }
+    
+    .content {
+      padding: 40px;
+    }
+    
+    .step-content {
+      display: none;
+      animation: fadeIn 0.3s;
+    }
+    
+    .step-content.active {
+      display: block;
+    }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    
+    .form-group {
+      margin-bottom: 25px;
+    }
+    
+    .form-label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 600;
+      color: #333;
+      font-size: 0.95em;
+    }
+    
+    .form-select,
+    .form-input,
+    .form-textarea {
+      width: 100%;
+      padding: 12px 15px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 1em;
+      transition: all 0.3s;
+      font-family: inherit;
+    }
+    
+    .form-select:focus,
+    .form-input:focus,
+    .form-textarea:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+    
+    .form-textarea {
+      resize: vertical;
+      min-height: 100px;
+    }
+    
+    .btn {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 1em;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .btn-primary {
+      background: #667eea;
+      color: white;
+    }
+    
+    .btn-primary:hover {
+      background: #5568d3;
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+    }
+    
+    .btn-secondary {
+      background: #6c757d;
+      color: white;
+    }
+    
+    .btn-secondary:hover {
+      background: #5a6268;
+    }
+    
+    .btn-success {
+      background: #4caf50;
+      color: white;
+    }
+    
+    .btn-success:hover {
+      background: #45a049;
+    }
+    
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none !important;
+    }
+    
+    .button-group {
+      display: flex;
+      gap: 15px;
+      margin-top: 30px;
+      padding-top: 30px;
+      border-top: 1px solid #e0e0e0;
+    }
+    
+    .pdf-canvas-container {
+      position: relative;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      overflow: auto;
+      background: #f5f5f5;
+      max-height: 800px;
+      margin-top: 20px;
+    }
+    
+    #pdfCanvas {
+      display: block;
+      margin: 0 auto;
+    }
+    
+    #mappingOverlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      cursor: crosshair;
+    }
+    
+    .mapping-box {
+      position: absolute;
+      border: 2px dashed #667eea;
+      background: rgba(102, 126, 234, 0.1);
+      cursor: move;
+    }
+    
+    .mapping-box.selected {
+      border-color: #ff5722;
+      background: rgba(255, 87, 34, 0.1);
+      box-shadow: 0 0 0 2px rgba(255, 87, 34, 0.3);
+    }
+    
+    .mapping-box-label {
+      position: absolute;
+      top: -25px;
+      left: 0;
+      background: #667eea;
+      color: white;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.75em;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+    
+    .resize-handle {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      background: white;
+      border: 2px solid #667eea;
+      border-radius: 50%;
+    }
+    
+    .resize-handle.nw { top: -5px; left: -5px; cursor: nw-resize; }
+    .resize-handle.ne { top: -5px; right: -5px; cursor: ne-resize; }
+    .resize-handle.sw { bottom: -5px; left: -5px; cursor: sw-resize; }
+    .resize-handle.se { bottom: -5px; right: -5px; cursor: se-resize; }
+    
+    .mapping-controls {
+      margin-top: 20px;
+      padding: 20px;
+      background: #f8f9fa;
+      border-radius: 8px;
+    }
+    
+    .mapping-list {
+      list-style: none;
+      margin-top: 15px;
+    }
+    
+    .mapping-item {
+      padding: 15px;
+      background: white;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      margin-bottom: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: all 0.2s;
+    }
+    
+    .mapping-item:hover {
+      border-color: #667eea;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+    
+    .mapping-item.selected {
+      border-color: #ff5722;
+      background: #fff3f0;
+    }
+    
+    .mapping-info {
+      flex: 1;
+    }
+    
+    .mapping-info strong {
+      color: #667eea;
+      font-size: 1.05em;
+    }
+    
+    .mapping-actions {
+      display: flex;
+      gap: 10px;
+    }
+    
+    .icon-btn {
+      width: 35px;
+      height: 35px;
+      border: none;
+      background: #f0f0f0;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .icon-btn:hover {
+      background: #667eea;
+      color: white;
+      transform: scale(1.1);
+    }
+    
+    .icon-btn.delete:hover {
+      background: #f44336;
+    }
+    
+    .alert {
+      padding: 15px 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    
+    .alert-info {
+      background: #e3f2fd;
+      color: #1976d2;
+      border-left: 4px solid #1976d2;
+    }
+    
+    .alert-success {
+      background: #e8f5e9;
+      color: #388e3c;
+      border-left: 4px solid #388e3c;
+    }
+    
+    .alert-warning {
+      background: #fff3e0;
+      color: #f57c00;
+      border-left: 4px solid #f57c00;
+    }
+    
+    .alert-error {
+      background: #ffebee;
+      color: #d32f2f;
+      border-left: 4px solid #d32f2f;
+    }
+    
+    .card {
+      background: white;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    
+    .card-title {
+      font-size: 1.2em;
+      font-weight: 600;
+      margin-bottom: 15px;
+      color: #333;
+    }
+    
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 0;
+    }
+    
+    .checkbox-group input[type="checkbox"] {
+      width: 20px;
+      height: 20px;
+      cursor: pointer;
+    }
+    
+    .progress-bar {
+      width: 100%;
+      height: 30px;
+      background: #e0e0e0;
+      border-radius: 15px;
+      overflow: hidden;
+      margin: 20px 0;
+    }
+    
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+      transition: width 0.3s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 600;
+      font-size: 0.9em;
+    }
+    
+    .results-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+    }
+    
+    .results-table th,
+    .results-table td {
+      padding: 12px;
+      text-align: left;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    
+    .results-table th {
+      background: #f8f9fa;
+      font-weight: 600;
+      color: #333;
+    }
+    
+    .results-table tr:hover {
+      background: #f8f9fa;
+    }
+    
+    .badge {
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 0.85em;
+      font-weight: 600;
+    }
+    
+    .badge-success {
+      background: #e8f5e9;
+      color: #388e3c;
+    }
+    
+    .badge-error {
+      background: #ffebee;
+      color: #d32f2f;
+    }
+    
+    .loading {
+      display: none;
+      text-align: center;
+      padding: 40px;
+    }
+    
+    .loading.active {
+      display: block;
+    }
+    
+    .spinner {
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid #667eea;
+      border-radius: 50%;
+      width: 50px;
+      height: 50px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 20px;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    
+    @media (max-width: 768px) {
+      .grid-2 {
+        grid-template-columns: 1fr;
+      }
+      
+      .stepper {
+        flex-direction: column;
+      }
+      
+      .step:not(:last-child)::after {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>📄 PDF Generator</h1>
+      <p>Generate custom PDFs from Google Sheets with visual field mapping</p>
+    </div>
+    
+    <div class="stepper">
+      <div class="step active" data-step="1" onclick="goToStep(1)">
+        <div class="step-number">1</div>
+        <div class="step-label">Select Data</div>
+      </div>
+      <div class="step" data-step="2" onclick="goToStep(2)">
+        <div class="step-number">2</div>
+        <div class="step-label">Choose Template</div>
+      </div>
+      <div class="step" data-step="3" onclick="goToStep(3)">
+        <div class="step-number">3</div>
+        <div class="step-label">Map Fields</div>
+      </div>
+      <div class="step" data-step="4" onclick="goToStep(4)">
+        <div class="step-label">Configure Delivery</div>
+      </div>
+      <div class="step" data-step="5" onclick="goToStep(5)">
+        <div class="step-number">5</div>
+        <div class="step-label">Generate</div>
+      </div>
+    </div>
+    
+    <div class="content">
+      <!-- Step 1: Select Data Source -->
+      <div class="step-content active" id="step1">
+        <h2>📊 Step 1: Select Data Source</h2>
+        
+        <div class="alert alert-info">
+          <span>ℹ️</span>
+          <span>Choose a Google Sheet that contains the data for your PDFs. The first row should contain column headers.</span>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Select Google Sheet</label>
+          <select class="form-select" id="spreadsheetSelect" onchange="loadSheetData()">
+            <option value="">-- Select a Spreadsheet --</option>
+          </select>
+        </div>
+        
+        <div class="form-group" id="sheetSelectGroup" style="display: none;">
+          <label class="form-label">Select Sheet</label>
+          <select class="form-select" id="sheetSelect" onchange="loadSheetColumns()">
+            <option value="">-- Select a Sheet --</option>
+          </select>
+        </div>
+        
+        <div id="sheetInfo" style="display: none;">
+          <div class="card">
+            <div class="card-title">Sheet Information</div>
+            <p><strong>Sheet Name:</strong> <span id="sheetName"></span></p>
+            <p><strong>Total Rows:</strong> <span id="rowCount"></span></p>
+            <p><strong>Columns:</strong> <span id="columnList"></span></p>
+          </div>
+        </div>
+        
+        <div class="button-group">
+          <button class="btn btn-primary" onclick="nextStep()" id="step1Next" disabled>
+            Next: Choose Template →
+          </button>
+        </div>
+      </div>
+      
+      <!-- Step 2: Choose PDF Template -->
+      <div class="step-content" id="step2">
+        <h2>📝 Step 2: Choose PDF Template</h2>
+        
+        <div class="alert alert-info">
+          <span>ℹ️</span>
+          <span>Select an existing PDF template or load a saved template configuration.</span>
+        </div>
+        
+        <div class="grid-2">
+          <div class="form-group">
+            <label class="form-label">Select PDF Template</label>
+            <select class="form-select" id="pdfTemplateSelect" onchange="loadPDFPreview()">
+              <option value="">-- Select a PDF Template --</option>
+            </select>
+          </div>
+          
+          <div class="form-group">
+            <label class="form-label">Or Load Saved Configuration</label>
+            <select class="form-select" id="savedConfigSelect" onchange="loadSavedConfig()">
+              <option value="">-- Load Saved Template --</option>
+            </select>
+          </div>
+        </div>
+        
+        <div class="button-group">
+          <button class="btn btn-secondary" onclick="previousStep()">
+            ← Previous
+          </button>
+          <button class="btn btn-primary" onclick="nextStep()" id="step2Next" disabled>
+            Next: Map Fields →
+          </button>
+        </div>
+      </div>
+      
+      <!-- Step 3: Map Fields -->
+      <div class="step-content" id="step3">
+        <h2>🎯 Step 3: Map Fields to PDF</h2>
+        
+        <div class="alert alert-warning">
+          <span>⚠️</span>
+          <span>Click and drag on the PDF to create field mapping boxes. Each box represents where data from your sheet will appear.</span>
+        </div>
+        
+        <div class="grid-2">
+          <div>
+            <h3>PDF Preview</h3>
+            <div class="pdf-canvas-container">
+              <canvas id="pdfCanvas"></canvas>
+              <canvas id="mappingOverlay"></canvas>
+            </div>
+            
+            <div class="mapping-controls">
+              <button class="btn btn-primary" onclick="addMappingBox()">
+                ➕ Add Field Box
+              </button>
+              <button class="btn btn-secondary" onclick="clearAllMappings()">
+                🗑️ Clear All
+              </button>
+            </div>
+          </div>
+          
+          <div>
+            <h3>Field Mappings</h3>
+            <div class="form-group">
+              <label class="form-label">Configuration Name</label>
+              <input type="text" class="form-input" id="configName" placeholder="Enter a name to save this configuration">
+            </div>
+            
+            <ul class="mapping-list" id="mappingList">
+              <li style="text-align: center; padding: 40px; color: #999;">
+                No mappings yet. Draw a box on the PDF to get started.
+              </li>
+            </ul>
+          </div>
+        </div>
+        
+        <div class="button-group">
+          <button class="btn btn-secondary" onclick="previousStep()">
+            ← Previous
+          </button>
+          <button class="btn btn-success" onclick="saveConfiguration()">
+            💾 Save Configuration
+          </button>
+          <button class="btn btn-primary" onclick="nextStep()" id="step3Next">
+            Next: Configure Delivery →
+          </button>
+        </div>
+      </div>
+      
+      <!-- Step 4: Configure Delivery -->
+      <div class="step-content" id="step4">
+        <h2>📤 Step 4: Configure Delivery Options</h2>
+        
+        <div class="card">
+          <div class="card-title">Document Naming</div>
+          <div class="form-group">
+            <label class="form-label">Document Number Field</label>
+            <select class="form-select" id="documentNumberField">
+              <option value="">-- Select Column for Filename --</option>
+            </select>
+            <small style="color: #666; display: block; margin-top: 8px;">
+              This column will be used to name your PDF files
+            </small>
+          </div>
+        </div>
+        
+        <div class="card">
+          <div class="card-title">Output Location</div>
+          <div class="form-group">
+            <label class="form-label">Save to Folder</label>
+            <select class="form-select" id="outputFolderSelect">
+              <option value="">-- My Drive (Root) --</option>
+            </select>
+          </div>
+          <button class="btn btn-secondary" onclick="createNewFolder()">
+            📁 Create New Folder
+          </button>
+        </div>
+        
+        <div class="card">
+          <div class="card-title">Email Delivery</div>
+          <div class="checkbox-group">
+            <input type="checkbox" id="enableEmail" onchange="toggleEmailOptions()">
+            <label for="enableEmail">Send PDFs via email</label>
+          </div>
+          
+          <div id="emailOptions" style="display: none; margin-top: 20px;">
+            <div class="form-group">
+              <label class="form-label">Email Address Column</label>
+              <select class="form-select" id="emailField">
+                <option value="">-- Select Column with Email Addresses --</option>
+              </select>
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Email Subject</label>
+              <input type="text" class="form-input" id="emailSubject" placeholder="Your Document is Ready" value="Your Document is Ready">
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Email Body</label>
+              <textarea class="form-textarea" id="emailBody" placeholder="Enter email message...">Please find your document attached.</textarea>
+            </div>
+            
+            <div class="grid-2">
+              <div class="form-group">
+                <label class="form-label">CC (optional)</label>
+                <input type="text" class="form-input" id="emailCC" placeholder="email@example.com">
+              </div>
+              
+              <div class="form-group">
+                <label class="form-label">BCC (optional)</label>
+                <input type="text" class="form-input" id="emailBCC" placeholder="email@example.com">
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="button-group">
+          <button class="btn btn-secondary" onclick="previousStep()">
+            ← Previous
+          </button>
+          <button class="btn btn-primary" onclick="nextStep()" id="step4Next">
+            Next: Generate PDFs →
+          </button>
+        </div>
+      </div>
+      
+      <!-- Step 5: Generate & Review -->
+      <div class="step-content" id="step5">
+        <h2>🚀 Step 5: Generate PDFs</h2>
+        
+        <div class="card">
+          <div class="card-title">Row Selection</div>
+          <div class="checkbox-group">
+            <input type="checkbox" id="selectAllRows" checked onchange="toggleAllRows()">
+            <label for="selectAllRows">Generate PDFs for all rows</label>
+          </div>
+          
+          <div class="form-group" id="rowSelectionGroup" style="display: none;">
+            <label class="form-label">Select Specific Rows (comma-separated)</label>
+            <input type="text" class="form-input" id="selectedRows" placeholder="1,2,3,5,8">
+            <small style="color: #666; display: block; margin-top: 8px;">
+              Enter row numbers (excluding header) to process
+            </small>
+          </div>
+        </div>
+        
+        <div class="card">
+          <div class="card-title">Generation Summary</div>
+          <p><strong>Spreadsheet:</strong> <span id="summarySpreadsheet"></span></p>
+          <p><strong>Sheet:</strong> <span id="summarySheet"></span></p>
+          <p><strong>PDF Template:</strong> <span id="summaryTemplate"></span></p>
+          <p><strong>Field Mappings:</strong> <span id="summaryMappings"></span></p>
+          <p><strong>Output Folder:</strong> <span id="summaryFolder"></span></p>
+          <p><strong>Email Delivery:</strong> <span id="summaryEmail"></span></p>
+        </div>
+        
+        <div class="button-group">
+          <button class="btn btn-secondary" onclick="previousStep()">
+            ← Previous
+          </button>
+          <button class="btn btn-success" onclick="startGeneration()" id="generateBtn" style="font-size: 1.1em; padding: 15px 30px;">
+            🚀 Generate PDFs
+          </button>
+        </div>
+        
+        <div class="loading" id="loadingIndicator">
+          <div class="spinner"></div>
+          <p>Generating PDFs... Please wait.</p>
+          <div class="progress-bar">
+            <div class="progress-fill" id="progressBar" style="width: 0%">0%</div>
+          </div>
+        </div>
+        
+        <div id="resultsSection" style="display: none;">
+          <div class="card">
+            <div class="card-title">✅ Generation Complete!</div>
+            <div id="resultsContent"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <?!= include('JavaScript'); ?>
+</body>
+</html>
