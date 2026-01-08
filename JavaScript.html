@@ -1,0 +1,866 @@
+<script>
+  // ============================================================================
+  // GLOBAL STATE
+  // ============================================================================
+  
+  const appState = {
+    currentStep: 1,
+    spreadsheetId: null,
+    spreadsheetName: null,
+    sheetName: null,
+    sheetHeaders: [],
+    pdfTemplateId: null,
+    pdfTemplateName: null,
+    pdfDoc: null,
+    pdfPage: null,
+    mappings: [],
+    selectedMapping: null,
+    isDrawing: false,
+    drawStart: null,
+    completedSteps: []
+  };
+  
+  // ============================================================================
+  // INITIALIZATION
+  // ============================================================================
+  
+  document.addEventListener('DOMContentLoaded', function() {
+    loadSpreadsheets();
+    loadPDFTemplates();
+    loadSavedConfigurations();
+    loadFolders();
+    setupPDFCanvas();
+    
+    // Initialize PDF.js worker
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  });
+  
+  // ============================================================================
+  // STEP NAVIGATION
+  // ============================================================================
+  
+  function goToStep(step) {
+    // Hide all step content
+    document.querySelectorAll('.step-content').forEach(el => {
+      el.classList.remove('active');
+    });
+    
+    // Show selected step
+    document.getElementById('step' + step).classList.add('active');
+    
+    // Update stepper UI
+    document.querySelectorAll('.step').forEach((el, index) => {
+      el.classList.remove('active');
+      if (index + 1 < step) {
+        el.classList.add('completed');
+      } else {
+        el.classList.remove('completed');
+      }
+    });
+    
+    document.querySelector('.step[data-step="' + step + '"]').classList.add('active');
+    
+    appState.currentStep = step;
+    
+    // Update summary if on final step
+    if (step === 5) {
+      updateGenerationSummary();
+    }
+  }
+  
+  function nextStep() {
+    if (appState.currentStep < 5) {
+      appState.completedSteps.push(appState.currentStep);
+      goToStep(appState.currentStep + 1);
+    }
+  }
+  
+  function previousStep() {
+    if (appState.currentStep > 1) {
+      goToStep(appState.currentStep - 1);
+    }
+  }
+  
+  // ============================================================================
+  // STEP 1: DATA SOURCE
+  // ============================================================================
+  
+  function loadSpreadsheets() {
+    showLoading('Loading spreadsheets...');
+    
+    google.script.run
+      .withSuccessHandler(function(spreadsheets) {
+        hideLoading();
+        const select = document.getElementById('spreadsheetSelect');
+        select.innerHTML = '<option value="">-- Select a Spreadsheet --</option>';
+        
+        spreadsheets.forEach(ss => {
+          const option = document.createElement('option');
+          option.value = ss.id;
+          option.textContent = ss.name;
+          select.appendChild(option);
+        });
+      })
+      .withFailureHandler(handleError)
+      .listSpreadsheets();
+  }
+  
+  function loadSheetData() {
+    const spreadsheetId = document.getElementById('spreadsheetSelect').value;
+    
+    if (!spreadsheetId) {
+      document.getElementById('sheetSelectGroup').style.display = 'none';
+      document.getElementById('sheetInfo').style.display = 'none';
+      document.getElementById('step1Next').disabled = true;
+      return;
+    }
+    
+    showLoading('Loading sheet data...');
+    
+    google.script.run
+      .withSuccessHandler(function(data) {
+        hideLoading();
+        appState.spreadsheetId = spreadsheetId;
+        appState.spreadsheetName = data.spreadsheetName;
+        
+        const sheetSelect = document.getElementById('sheetSelect');
+        sheetSelect.innerHTML = '<option value="">-- Select a Sheet --</option>';
+        
+        data.sheets.forEach(sheet => {
+          const option = document.createElement('option');
+          option.value = sheet.name;
+          option.textContent = `${sheet.name} (${sheet.rowCount} rows)`;
+          sheetSelect.appendChild(option);
+        });
+        
+        document.getElementById('sheetSelectGroup').style.display = 'block';
+      })
+      .withFailureHandler(handleError)
+      .getSpreadsheetData(spreadsheetId);
+  }
+  
+  function loadSheetColumns() {
+    const sheetName = document.getElementById('sheetSelect').value;
+    
+    if (!sheetName) {
+      document.getElementById('sheetInfo').style.display = 'none';
+      document.getElementById('step1Next').disabled = true;
+      return;
+    }
+    
+    showLoading('Loading columns...');
+    
+    google.script.run
+      .withSuccessHandler(function(data) {
+        hideLoading();
+        
+        const sheet = data.sheets.find(s => s.name === sheetName);
+        appState.sheetName = sheetName;
+        appState.sheetHeaders = sheet.headers;
+        
+        document.getElementById('sheetName').textContent = sheet.name;
+        document.getElementById('rowCount').textContent = sheet.rowCount;
+        document.getElementById('columnList').textContent = sheet.headers.join(', ');
+        
+        document.getElementById('sheetInfo').style.display = 'block';
+        document.getElementById('step1Next').disabled = false;
+        
+        // Populate field dropdowns for later steps
+        populateFieldDropdowns(sheet.headers);
+      })
+      .withFailureHandler(handleError)
+      .getSpreadsheetData(appState.spreadsheetId);
+  }
+  
+  function populateFieldDropdowns(headers) {
+    const documentNumberField = document.getElementById('documentNumberField');
+    const emailField = document.getElementById('emailField');
+    
+    documentNumberField.innerHTML = '<option value="">-- Select Column for Filename --</option>';
+    emailField.innerHTML = '<option value="">-- Select Column with Email Addresses --</option>';
+    
+    headers.forEach(header => {
+      const opt1 = document.createElement('option');
+      opt1.value = header;
+      opt1.textContent = header;
+      documentNumberField.appendChild(opt1);
+      
+      const opt2 = document.createElement('option');
+      opt2.value = header;
+      opt2.textContent = header;
+      emailField.appendChild(opt2);
+    });
+  }
+  
+  // ============================================================================
+  // STEP 2: PDF TEMPLATE
+  // ============================================================================
+  
+  function loadPDFTemplates() {
+    google.script.run
+      .withSuccessHandler(function(templates) {
+        const select = document.getElementById('pdfTemplateSelect');
+        select.innerHTML = '<option value="">-- Select a PDF Template --</option>';
+        
+        templates.forEach(tmpl => {
+          const option = document.createElement('option');
+          option.value = tmpl.id;
+          option.textContent = `${tmpl.name} (${formatFileSize(tmpl.size)})`;
+          select.appendChild(option);
+        });
+      })
+      .withFailureHandler(handleError)
+      .listPDFTemplates();
+  }
+  
+  function loadSavedConfigurations() {
+    google.script.run
+      .withSuccessHandler(function(configs) {
+        const select = document.getElementById('savedConfigSelect');
+        select.innerHTML = '<option value="">-- Load Saved Template --</option>';
+        
+        configs.forEach(config => {
+          const option = document.createElement('option');
+          option.value = config.name;
+          option.textContent = `${config.name} (${config.fieldCount} fields)`;
+          select.appendChild(option);
+        });
+      })
+      .withFailureHandler(handleError)
+      .listTemplateConfigs();
+  }
+  
+  function loadPDFPreview() {
+    const pdfId = document.getElementById('pdfTemplateSelect').value;
+    
+    if (!pdfId) {
+      document.getElementById('step2Next').disabled = true;
+      return;
+    }
+    
+    appState.pdfTemplateId = pdfId;
+    const option = document.getElementById('pdfTemplateSelect').selectedOptions[0];
+    appState.pdfTemplateName = option.textContent;
+    
+    showLoading('Loading PDF preview...');
+    
+    google.script.run
+      .withSuccessHandler(function(pdfData) {
+        hideLoading();
+        renderPDF(pdfData.base64);
+        document.getElementById('step2Next').disabled = false;
+      })
+      .withFailureHandler(handleError)
+      .getPDFAsBase64(pdfId);
+  }
+  
+  function loadSavedConfig() {
+    const configName = document.getElementById('savedConfigSelect').value;
+    
+    if (!configName) return;
+    
+    showLoading('Loading configuration...');
+    
+    google.script.run
+      .withSuccessHandler(function(config) {
+        hideLoading();
+        
+        // Load the PDF template
+        appState.pdfTemplateId = config.pdfTemplateId;
+        document.getElementById('pdfTemplateSelect').value = config.pdfTemplateId;
+        
+        // Load mappings
+        appState.mappings = config.mappings || [];
+        
+        // Load PDF preview
+        loadPDFPreview();
+        
+        // Update config name field
+        document.getElementById('configName').value = configName;
+        
+        showAlert('success', 'Configuration loaded successfully!');
+      })
+      .withFailureHandler(handleError)
+      .loadTemplateConfig(configName);
+  }
+  
+  // ============================================================================
+  // STEP 3: PDF RENDERING & FIELD MAPPING
+  // ============================================================================
+  
+  function renderPDF(base64Data) {
+    const canvas = document.getElementById('pdfCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Convert base64 to Uint8Array
+    const binaryString = atob(base64Data);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    
+    // Load PDF
+    pdfjsLib.getDocument({ data: bytes }).promise.then(function(pdf) {
+      appState.pdfDoc = pdf;
+      
+      // Render first page
+      pdf.getPage(1).then(function(page) {
+        appState.pdfPage = page;
+        
+        const viewport = page.getViewport({ scale: 1.5 });
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        
+        // Setup overlay canvas
+        const overlay = document.getElementById('mappingOverlay');
+        overlay.width = viewport.width;
+        overlay.height = viewport.height;
+        overlay.style.width = viewport.width + 'px';
+        overlay.style.height = viewport.height + 'px';
+        
+        const renderContext = {
+          canvasContext: ctx,
+          viewport: viewport
+        };
+        
+        page.render(renderContext).promise.then(function() {
+          // Render any existing mappings
+          renderMappings();
+        });
+      });
+    }).catch(function(error) {
+      handleError(error);
+    });
+  }
+  
+  function setupPDFCanvas() {
+    const overlay = document.getElementById('mappingOverlay');
+    
+    overlay.addEventListener('mousedown', startDrawing);
+    overlay.addEventListener('mousemove', drawBox);
+    overlay.addEventListener('mouseup', endDrawing);
+  }
+  
+  function startDrawing(e) {
+    if (!appState.pdfPage) return;
+    
+    const rect = e.target.getBoundingClientRect();
+    appState.isDrawing = true;
+    appState.drawStart = {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top
+    };
+  }
+  
+  function drawBox(e) {
+    if (!appState.isDrawing) return;
+    
+    const rect = e.target.getBoundingClientRect();
+    const currentX = e.clientX - rect.left;
+    const currentY = e.clientY - rect.top;
+    
+    const canvas = document.getElementById('mappingOverlay');
+    const ctx = canvas.getContext('2d');
+    
+    // Clear and redraw
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    renderMappings();
+    
+    // Draw current box
+    ctx.strokeStyle = '#667eea';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    ctx.strokeRect(
+      appState.drawStart.x,
+      appState.drawStart.y,
+      currentX - appState.drawStart.x,
+      currentY - appState.drawStart.y
+    );
+    ctx.setLineDash([]);
+  }
+  
+  function endDrawing(e) {
+    if (!appState.isDrawing) return;
+    
+    const rect = e.target.getBoundingClientRect();
+    const endX = e.clientX - rect.left;
+    const endY = e.clientY - rect.top;
+    
+    const width = Math.abs(endX - appState.drawStart.x);
+    const height = Math.abs(endY - appState.drawStart.y);
+    
+    // Only create mapping if box is large enough
+    if (width > 20 && height > 20) {
+      const mapping = {
+        id: Date.now(),
+        x: Math.min(appState.drawStart.x, endX),
+        y: Math.min(appState.drawStart.y, endY),
+        width: width,
+        height: height,
+        field: '',
+        fontSize: 12,
+        align: 'left'
+      };
+      
+      appState.mappings.push(mapping);
+      renderMappings();
+      updateMappingList();
+    }
+    
+    appState.isDrawing = false;
+  }
+  
+  function renderMappings() {
+    const canvas = document.getElementById('mappingOverlay');
+    const ctx = canvas.getContext('2d');
+    
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    appState.mappings.forEach((mapping, index) => {
+      // Draw box
+      ctx.strokeStyle = appState.selectedMapping === index ? '#ff5722' : '#667eea';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 5]);
+      ctx.strokeRect(mapping.x, mapping.y, mapping.width, mapping.height);
+      ctx.setLineDash([]);
+      
+      // Draw label
+      if (mapping.field) {
+        ctx.fillStyle = '#667eea';
+        ctx.font = '12px Arial';
+        ctx.fillText(mapping.field, mapping.x, mapping.y - 5);
+      }
+      
+      // Draw number
+      ctx.fillStyle = 'rgba(102, 126, 234, 0.1)';
+      ctx.fillRect(mapping.x, mapping.y, mapping.width, mapping.height);
+      ctx.fillStyle = '#667eea';
+      ctx.font = 'bold 16px Arial';
+      ctx.fillText((index + 1).toString(), mapping.x + 5, mapping.y + 20);
+    });
+  }
+  
+  function updateMappingList() {
+    const list = document.getElementById('mappingList');
+    
+    if (appState.mappings.length === 0) {
+      list.innerHTML = `
+        <li style="text-align: center; padding: 40px; color: #999;">
+          No mappings yet. Draw a box on the PDF to get started.
+        </li>
+      `;
+      return;
+    }
+    
+    list.innerHTML = '';
+    
+    appState.mappings.forEach((mapping, index) => {
+      const li = document.createElement('li');
+      li.className = 'mapping-item';
+      if (appState.selectedMapping === index) {
+        li.classList.add('selected');
+      }
+      
+      li.innerHTML = `
+        <div class="mapping-info">
+          <strong>Field ${index + 1}</strong><br>
+          <select class="form-select" style="margin-top: 8px;" onchange="updateMappingField(${index}, this.value)">
+            <option value="">-- Select Field --</option>
+            ${appState.sheetHeaders.map(h => 
+              `<option value="${h}" ${mapping.field === h ? 'selected' : ''}>${h}</option>`
+            ).join('')}
+          </select>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px;">
+            <input type="number" class="form-input" placeholder="Font Size" value="${mapping.fontSize}" 
+              onchange="updateMappingStyle(${index}, 'fontSize', this.value)" style="padding: 6px;">
+            <select class="form-select" onchange="updateMappingStyle(${index}, 'align', this.value)" style="padding: 6px;">
+              <option value="left" ${mapping.align === 'left' ? 'selected' : ''}>Left</option>
+              <option value="center" ${mapping.align === 'center' ? 'selected' : ''}>Center</option>
+              <option value="right" ${mapping.align === 'right' ? 'selected' : ''}>Right</option>
+            </select>
+          </div>
+        </div>
+        <div class="mapping-actions">
+          <button class="icon-btn" onclick="selectMapping(${index})" title="Select">
+            👁️
+          </button>
+          <button class="icon-btn delete" onclick="deleteMapping(${index})" title="Delete">
+            🗑️
+          </button>
+        </div>
+      `;
+      
+      list.appendChild(li);
+    });
+  }
+  
+  function addMappingBox() {
+    // Add a default box in the center
+    const canvas = document.getElementById('pdfCanvas');
+    const mapping = {
+      id: Date.now(),
+      x: canvas.width / 2 - 100,
+      y: canvas.height / 2 - 25,
+      width: 200,
+      height: 50,
+      field: '',
+      fontSize: 12,
+      align: 'left'
+    };
+    
+    appState.mappings.push(mapping);
+    renderMappings();
+    updateMappingList();
+  }
+  
+  function updateMappingField(index, field) {
+    appState.mappings[index].field = field;
+    renderMappings();
+  }
+  
+  function updateMappingStyle(index, property, value) {
+    appState.mappings[index][property] = property === 'fontSize' ? parseInt(value) : value;
+    renderMappings();
+  }
+  
+  function selectMapping(index) {
+    appState.selectedMapping = appState.selectedMapping === index ? null : index;
+    renderMappings();
+    updateMappingList();
+  }
+  
+  function deleteMapping(index) {
+    if (confirm('Delete this field mapping?')) {
+      appState.mappings.splice(index, 1);
+      renderMappings();
+      updateMappingList();
+    }
+  }
+  
+  function clearAllMappings() {
+    if (confirm('Clear all field mappings?')) {
+      appState.mappings = [];
+      renderMappings();
+      updateMappingList();
+    }
+  }
+  
+  function saveConfiguration() {
+    const configName = document.getElementById('configName').value.trim();
+    
+    if (!configName) {
+      showAlert('error', 'Please enter a configuration name');
+      return;
+    }
+    
+    if (appState.mappings.length === 0) {
+      showAlert('error', 'Please create at least one field mapping');
+      return;
+    }
+    
+    const config = {
+      pdfTemplateId: appState.pdfTemplateId,
+      pdfTemplateName: appState.pdfTemplateName,
+      mappings: appState.mappings
+    };
+    
+    showLoading('Saving configuration...');
+    
+    google.script.run
+      .withSuccessHandler(function(result) {
+        hideLoading();
+        showAlert('success', 'Configuration saved successfully!');
+        loadSavedConfigurations();
+      })
+      .withFailureHandler(handleError)
+      .saveTemplateConfig(configName, config);
+  }
+  
+  // ============================================================================
+  // STEP 4: DELIVERY OPTIONS
+  // ============================================================================
+  
+  function loadFolders() {
+    google.script.run
+      .withSuccessHandler(function(folders) {
+        const select = document.getElementById('outputFolderSelect');
+        select.innerHTML = '<option value="">-- My Drive (Root) --</option>';
+        
+        folders.forEach(folder => {
+          const option = document.createElement('option');
+          option.value = folder.id;
+          option.textContent = folder.name;
+          select.appendChild(option);
+        });
+      })
+      .withFailureHandler(handleError)
+      .listFolders();
+  }
+  
+  function createNewFolder() {
+    const folderName = prompt('Enter folder name:');
+    if (!folderName) return;
+    
+    showLoading('Creating folder...');
+    
+    google.script.run
+      .withSuccessHandler(function(folder) {
+        hideLoading();
+        showAlert('success', 'Folder created successfully!');
+        
+        const select = document.getElementById('outputFolderSelect');
+        const option = document.createElement('option');
+        option.value = folder.id;
+        option.textContent = folder.name;
+        option.selected = true;
+        select.appendChild(option);
+      })
+      .withFailureHandler(handleError)
+      .createOutputFolder(folderName);
+  }
+  
+  function toggleEmailOptions() {
+    const enabled = document.getElementById('enableEmail').checked;
+    document.getElementById('emailOptions').style.display = enabled ? 'block' : 'none';
+  }
+  
+  // ============================================================================
+  // STEP 5: GENERATION
+  // ============================================================================
+  
+  function toggleAllRows() {
+    const selectAll = document.getElementById('selectAllRows').checked;
+    document.getElementById('rowSelectionGroup').style.display = selectAll ? 'none' : 'block';
+  }
+  
+  function updateGenerationSummary() {
+    document.getElementById('summarySpreadsheet').textContent = appState.spreadsheetName || 'Not selected';
+    document.getElementById('summarySheet').textContent = appState.sheetName || 'Not selected';
+    document.getElementById('summaryTemplate').textContent = appState.pdfTemplateName || 'Not selected';
+    document.getElementById('summaryMappings').textContent = appState.mappings.length + ' fields mapped';
+    
+    const folderId = document.getElementById('outputFolderSelect').value;
+    const folderName = folderId 
+      ? document.getElementById('outputFolderSelect').selectedOptions[0].textContent 
+      : 'My Drive (Root)';
+    document.getElementById('summaryFolder').textContent = folderName;
+    
+    const emailEnabled = document.getElementById('enableEmail').checked;
+    document.getElementById('summaryEmail').textContent = emailEnabled ? 'Enabled' : 'Disabled';
+  }
+  
+  function startGeneration() {
+    // Validate
+    if (!appState.spreadsheetId || !appState.sheetName) {
+      showAlert('error', 'Please select a data source');
+      return;
+    }
+    
+    if (!appState.pdfTemplateId) {
+      showAlert('error', 'Please select a PDF template');
+      return;
+    }
+    
+    if (appState.mappings.length === 0) {
+      showAlert('error', 'Please create at least one field mapping');
+      return;
+    }
+    
+    const documentNumberField = document.getElementById('documentNumberField').value;
+    if (!documentNumberField) {
+      showAlert('error', 'Please select a document number field');
+      return;
+    }
+    
+    // Get selected rows
+    const selectAll = document.getElementById('selectAllRows').checked;
+    const selectedRows = selectAll ? null : 
+      document.getElementById('selectedRows').value.split(',').map(r => parseInt(r.trim()));
+    
+    // Build email config
+    const emailConfig = {
+      enabled: document.getElementById('enableEmail').checked,
+      emailField: document.getElementById('emailField').value,
+      subject: document.getElementById('emailSubject').value,
+      body: document.getElementById('emailBody').value,
+      ccEmails: document.getElementById('emailCC').value,
+      bccEmails: document.getElementById('emailBCC').value
+    };
+    
+    const params = {
+      spreadsheetId: appState.spreadsheetId,
+      sheetName: appState.sheetName,
+      pdfTemplateId: appState.pdfTemplateId,
+      mappings: appState.mappings,
+      selectedRows: selectedRows,
+      documentNumberField: documentNumberField,
+      outputFolderId: document.getElementById('outputFolderSelect').value,
+      emailConfig: emailConfig
+    };
+    
+    // Show loading
+    document.getElementById('loadingIndicator').classList.add('active');
+    document.getElementById('generateBtn').disabled = true;
+    
+    // Start generation
+    google.script.run
+      .withSuccessHandler(function(results) {
+        document.getElementById('loadingIndicator').classList.remove('active');
+        document.getElementById('generateBtn').disabled = false;
+        displayResults(results);
+      })
+      .withFailureHandler(function(error) {
+        document.getElementById('loadingIndicator').classList.remove('active');
+        document.getElementById('generateBtn').disabled = false;
+        handleError(error);
+      })
+      .generatePDFs(params);
+  }
+  
+  function displayResults(results) {
+    const resultsSection = document.getElementById('resultsSection');
+    const resultsContent = document.getElementById('resultsContent');
+    
+    let html = `
+      <div class="alert alert-success">
+        <span>✅</span>
+        <span>Successfully generated ${results.success.length} PDF(s)</span>
+      </div>
+    `;
+    
+    if (results.errors.length > 0) {
+      html += `
+        <div class="alert alert-error">
+          <span>❌</span>
+          <span>${results.errors.length} error(s) occurred during generation</span>
+        </div>
+      `;
+    }
+    
+    // Success table
+    if (results.success.length > 0) {
+      html += `
+        <h4 style="margin-top: 20px;">Successfully Generated PDFs</h4>
+        <table class="results-table">
+          <thead>
+            <tr>
+              <th>Document Number</th>
+              <th>Row</th>
+              <th>Email Sent</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+      
+      results.success.forEach(item => {
+        html += `
+          <tr>
+            <td><strong>${item.documentNumber}</strong></td>
+            <td>${item.rowIndex}</td>
+            <td>
+              ${item.emailSent 
+                ? '<span class="badge badge-success">✓ Sent</span>' 
+                : '<span class="badge badge-error">✗ Not sent</span>'}
+            </td>
+            <td>
+              <a href="${item.fileUrl}" target="_blank" class="btn btn-primary" style="padding: 6px 12px; font-size: 0.9em;">
+                View PDF
+              </a>
+            </td>
+          </tr>
+        `;
+      });
+      
+      html += '</tbody></table>';
+    }
+    
+    // Error table
+    if (results.errors.length > 0) {
+      html += `
+        <h4 style="margin-top: 20px; color: #d32f2f;">Errors</h4>
+        <table class="results-table">
+          <thead>
+            <tr>
+              <th>Document Number</th>
+              <th>Row</th>
+              <th>Error Message</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+      
+      results.errors.forEach(item => {
+        html += `
+          <tr>
+            <td>${item.documentNumber}</td>
+            <td>${item.rowIndex}</td>
+            <td style="color: #d32f2f;">${item.error}</td>
+          </tr>
+        `;
+      });
+      
+      html += '</tbody></table>';
+    }
+    
+    html += `
+      <div style="margin-top: 30px; text-align: center;">
+        <button class="btn btn-primary" onclick="location.reload()">
+          Generate More PDFs
+        </button>
+      </div>
+    `;
+    
+    resultsContent.innerHTML = html;
+    resultsSection.style.display = 'block';
+  }
+  
+  // ============================================================================
+  // UTILITY FUNCTIONS
+  // ============================================================================
+  
+  function showLoading(message = 'Loading...') {
+    // Could implement a loading overlay here
+    console.log(message);
+  }
+  
+  function hideLoading() {
+    // Hide loading overlay
+    console.log('Loading complete');
+  }
+  
+  function showAlert(type, message) {
+    // Create alert element
+    const alert = document.createElement('div');
+    alert.className = `alert alert-${type}`;
+    alert.innerHTML = `
+      <span>${type === 'success' ? '✓' : type === 'error' ? '✗' : 'ℹ'}</span>
+      <span>${message}</span>
+    `;
+    
+    // Insert at top of current step content
+    const currentStep = document.querySelector('.step-content.active');
+    currentStep.insertBefore(alert, currentStep.firstChild);
+    
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+      alert.style.transition = 'opacity 0.3s';
+      alert.style.opacity = '0';
+      setTimeout(() => alert.remove(), 300);
+    }, 5000);
+  }
+  
+  function handleError(error) {
+    console.error('Error:', error);
+    showAlert('error', error.message || 'An error occurred. Please try again.');
+  }
+  
+  function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+  }
+</script>
